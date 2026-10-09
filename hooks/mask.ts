@@ -76,7 +76,8 @@ export const maskLabeled = (v: string): string => (v.length <= 6 ? '****' : `${v
 
 const TWID_RE = /(?<![A-Za-z0-9])[A-Za-z][1289A-Da-d][0-9]{8}(?![0-9])/g
 
-const MRN_LABELS = String.raw`病歷號碼|病歷號|MRN|Chart[ _]?No`
+// 內建標籤：不可關閉（工具的核心）。使用者只能透過 extraMrnLabels 追加。
+const BUILTIN_MRN_LABELS = String.raw`病歷號碼|病歷號|MRN|Chart[ _]?No`
 const NHI_LABELS = String.raw`健保卡號碼|健保卡號`
 const SEP = String.raw`["']?[ \t]*[:：=][ \t]*["']?|[ \t]+`
 // 值長度上限 64：遠大於實際病歷號（約 7–12 碼）與健保卡號（12 碼），只為避免病態長字串。
@@ -87,20 +88,93 @@ const CELL_VALUE_RE = new RegExp(String.raw`^([ "']*)([A-Za-z0-9]{1,${MAX_VALUE}
 /** 病歷號／健保卡號的值：英數、長度在上限內、至少含一個數字（S3）。表格欄、JSON 表格共用。 */
 const isIdValue = (v: string): boolean => v.length <= MAX_VALUE && /^[A-Za-z0-9]+$/.test(v) && /[0-9]/.test(v)
 
-const LABELED_RES: Array<[Kind, RegExp]> = [
-  ['mrn', new RegExp(String.raw`(?:${MRN_LABELS})(?:${SEP})${VALUE}`, 'gi')],
-  ['nhi', new RegExp(String.raw`(?:${NHI_LABELS})(?:${SEP})${VALUE}`, 'gi')],
-]
+// ---------- 使用者設定（userConfig） ----------
 
-const HEADER_RE: Array<[Kind, RegExp]> = [
-  ['mrn', new RegExp(String.raw`^["' ]*(?:${MRN_LABELS})["' ]*$`, 'i')],
-  ['nhi', new RegExp(String.raw`^["' ]*(?:${NHI_LABELS})["' ]*$`, 'i')],
-]
+export type GuardConfig = {
+  extraMrnLabels: readonly string[]
+  sensitiveDirs: readonly string[]
+  exemptMaskExamples: readonly string[]
+  readOnlyMcpTools: readonly string[]
+}
+
+export const DEFAULT_CONFIG: GuardConfig = {
+  extraMrnLabels: [],
+  sensitiveDirs: ['00_private', 'private', 'phi'],
+  exemptMaskExamples: [],
+  readOnlyMcpTools: ['mcp__claude_ai_Google_Sheets__get_values', 'mcp__claude_ai_Google_Sheets__get_spreadsheet'],
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** 遮罩字樣的外形：英數 2–3 碼 + 四個星號 + 英數 2 碼，或有標籤後接四個星號（短值全遮）。 */
+const MASK_SHAPE = String.raw`[A-Za-z0-9]{2,3}\*{4}[A-Za-z0-9]{2}`
+
+function stringList(v: unknown): string[] | undefined {
+  if (v === undefined) return undefined
+  if (!Array.isArray(v)) return undefined
+  return v.filter((x): x is string => typeof x === 'string')
+}
+
+/**
+ * 把 register 收到的 options 整理成可用的設定；異常值依 2026-10-09 開源版 Q3 決策處理：
+ * 標籤當純文字、空白或少於 2 字元者忽略；豁免值不像遮罩字樣者忽略；讀不到就用預設。
+ */
+export function normalizeConfig(options: unknown): { config: GuardConfig; warnings: string[] } {
+  const warnings: string[] = []
+  const o = (options && typeof options === 'object' ? options : {}) as Record<string, unknown>
+  const pick = (k: keyof GuardConfig): readonly string[] => {
+    const v = stringList(o[k])
+    if (v === undefined) {
+      if (o[k] !== undefined) warnings.push(`${k} 不是字串陣列，改用預設值`)
+      return DEFAULT_CONFIG[k]
+    }
+    return v
+  }
+  const labels = pick('extraMrnLabels').map(s => s.trim()).filter(s => s.length >= 2)
+  const dirs = pick('sensitiveDirs').map(s => s.trim()).filter(s => s.length > 0)
+  const shape = new RegExp(String.raw`^${MASK_SHAPE}$`)
+  const exempt = pick('exemptMaskExamples').map(s => s.trim()).filter(s => shape.test(s))
+  const mcp = pick('readOnlyMcpTools').map(s => s.trim()).filter(s => s.startsWith('mcp__'))
+  if (dirs.length === 0) warnings.push('sensitiveDirs 為空：敏感目錄的圖片／PDF 守門已關閉')
+  return { config: { extraMrnLabels: labels, sensitiveDirs: dirs, exemptMaskExamples: exempt, readOnlyMcpTools: mcp }, warnings }
+}
+
+export type Rules = {
+  labeled: Array<[Kind, RegExp]>
+  header: Array<[Kind, RegExp]>
+  maskToken: RegExp
+  exempt: ReadonlySet<string>
+  sensitiveDirs: ReadonlySet<string>
+  readOnlyMcpTools: ReadonlySet<string>
+}
+
+export function buildRules(cfg: GuardConfig): Rules {
+  const mrn = [BUILTIN_MRN_LABELS, ...cfg.extraMrnLabels.map(escapeRe)].join('|')
+  return {
+    labeled: [
+      ['mrn', new RegExp(String.raw`(?:${mrn})(?:${SEP})${VALUE}`, 'gi')],
+      ['nhi', new RegExp(String.raw`(?:${NHI_LABELS})(?:${SEP})${VALUE}`, 'gi')],
+    ],
+    header: [
+      ['mrn', new RegExp(String.raw`^["' ]*(?:${mrn})["' ]*$`, 'i')],
+      ['nhi', new RegExp(String.raw`^["' ]*(?:${NHI_LABELS})["' ]*$`, 'i')],
+    ],
+    maskToken: new RegExp(
+      String.raw`(?<![A-Za-z0-9])${MASK_SHAPE}(?![A-Za-z0-9])|(?:${mrn}|${NHI_LABELS})(?:${SEP})\*{4}(?!\*)`,
+      'gi',
+    ),
+    exempt: new Set(cfg.exemptMaskExamples),
+    sensitiveDirs: new Set(cfg.sensitiveDirs.map(s => s.toLowerCase())),
+    readOnlyMcpTools: new Set(cfg.readOnlyMcpTools),
+  }
+}
+
+export const DEFAULT_RULES: Rules = buildRules(DEFAULT_CONFIG)
 
 type Span = { start: number; end: number; replacement: string; kind: Kind }
 
-function headerKind(cell: string): Kind | undefined {
-  for (const [kind, re] of HEADER_RE) if (re.test(cell)) return kind
+function headerKind(cell: string, rules: Rules): Kind | undefined {
+  for (const [kind, re] of rules.header) if (re.test(cell)) return kind
   return undefined
 }
 
@@ -125,7 +199,7 @@ function splitWithOffsets(line: string, d: string): Array<{ text: string; start:
   return cells
 }
 
-function tableSpans(norm: string): Span[] {
+function tableSpans(norm: string, rules: Rules): Span[] {
   const spans: Span[] = []
   const lines: Array<{ text: string; start: number }> = []
   let s = 0
@@ -160,7 +234,7 @@ function tableSpans(norm: string): Span[] {
       if (cells.length < 2) continue
       const cols: Array<[number, Kind]> = []
       cells.forEach((c, i) => {
-        const k = headerKind(c.text.trim())
+        const k = headerKind(c.text.trim(), rules)
         if (k) cols.push([i, k])
       })
       if (cols.length > 0) {
@@ -174,7 +248,7 @@ function tableSpans(norm: string): Span[] {
 
 // ---------- JSON 二維陣列（Google Sheets get_values 等）：表頭列是標籤的那一欄 ----------
 
-function jsonGridSpans(norm: string): Span[] {
+function jsonGridSpans(norm: string, rules: Rules): Span[] {
   const t = norm.trim()
   if (!t.startsWith('[') && !t.startsWith('{')) return []
   let parsed: unknown
@@ -191,7 +265,7 @@ function jsonGridSpans(norm: string): Span[] {
     if (!header) return
     const cols: Array<[number, Kind]> = []
     header.forEach((h, i) => {
-      const k = typeof h === 'string' ? headerKind(h.trim()) : undefined
+      const k = typeof h === 'string' ? headerKind(h.trim(), rules) : undefined
       if (k) cols.push([i, k])
     })
     if (cols.length === 0) return
@@ -230,7 +304,7 @@ function jsonGridSpans(norm: string): Span[] {
 
 // ---------- 主函式 ----------
 
-export function maskText(input: string): { text: string; counts: Counts } {
+export function maskText(input: string, rules: Rules = DEFAULT_RULES): { text: string; counts: Counts } {
   const counts = emptyCounts()
   if (input.length === 0) return { text: input, counts }
   const norm = toHalfWidth(input)
@@ -242,7 +316,7 @@ export function maskText(input: string): { text: string; counts: Counts } {
     const start = m.index ?? 0
     spans.push({ start, end: start + 10, replacement: maskTwId(id), kind: 'twid' })
   }
-  for (const [kind, re] of LABELED_RES) {
+  for (const [kind, re] of rules.labeled) {
     for (const m of norm.matchAll(re)) {
       const value = m[1]
       if (value === undefined) continue
@@ -250,7 +324,7 @@ export function maskText(input: string): { text: string; counts: Counts } {
       spans.push({ start, end: start + value.length, replacement: maskLabeled(value), kind })
     }
   }
-  spans.push(...tableSpans(norm), ...jsonGridSpans(norm))
+  spans.push(...tableSpans(norm, rules), ...jsonGridSpans(norm, rules))
 
   if (spans.length === 0) return { text: input, counts }
 
@@ -284,12 +358,15 @@ function documentText(b: Block): string | undefined {
 }
 
 /** 遮罩 text block、tool_result 的 content（字串或 block 陣列）；命中識別資料的文字型 document 整塊換成說明文字。 */
-export function maskBlocks(blocks: readonly Block[]): { blocks: Block[]; counts: Counts; changed: boolean } {
+export function maskBlocks(
+  blocks: readonly Block[],
+  rules: Rules = DEFAULT_RULES,
+): { blocks: Block[]; counts: Counts; changed: boolean } {
   let counts = emptyCounts()
   let changed = false
   /** 遮罩一段字串；沒有命中回 undefined，呼叫端保留原 block（保持參照不變）。 */
   const apply = (s: string): string | undefined => {
-    const r = maskText(s)
+    const r = maskText(s, rules)
     if (totalOf(r.counts) === 0) return undefined
     counts = addCounts(counts, r.counts)
     changed = true
@@ -351,18 +428,11 @@ export function placeholderBlocks(blocks: unknown): Block[] {
 
 // ---------- 資料完整性：偵測本 mod 產生的遮罩字樣 ----------
 
-/** CLAUDE.md §4 的示範字樣，文件中合法出現，不擋。 */
-export const CANONICAL_EXAMPLES = ['A12****90', '12****89']
-
-const MASK_TOKEN_RE = new RegExp(
-  String.raw`(?<![A-Za-z0-9])[A-Za-z0-9]{2,3}\*{4}[A-Za-z0-9]{2}(?![A-Za-z0-9])|(?:${MRN_LABELS}|${NHI_LABELS})(?:${SEP})\*{4}(?!\*)`,
-  'gi',
-)
-
-export function findMaskTokens(s: string): string[] {
+/** 找出輸入中的遮罩字樣；使用者設定的豁免示範字樣（exemptMaskExamples）除外。 */
+export function findMaskTokens(s: string, rules: Rules = DEFAULT_RULES): string[] {
   const hits: string[] = []
-  for (const m of s.matchAll(MASK_TOKEN_RE)) {
-    if (!CANONICAL_EXAMPLES.includes(m[0])) hits.push(m[0])
+  for (const m of s.matchAll(rules.maskToken)) {
+    if (!rules.exempt.has(m[0])) hits.push(m[0])
   }
   return hits
 }
@@ -370,13 +440,13 @@ export function findMaskTokens(s: string): string[] {
 // ---------- 圖片／掃描檔 ----------
 
 const MEDIA_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|tiff?|heic|pdf)$/i
-const SENSITIVE_SEGMENTS = new Set(['00_private', 'raw', 'private', 'phi'])
 
 export const isMediaPath = (p: string): boolean => MEDIA_EXT_RE.test(p)
 
-export function isSensitivePath(p: string): boolean {
+/** 路徑的任一目錄段（不含檔名）是設定中的敏感目錄，不分大小寫。 */
+export function isSensitivePath(p: string, rules: Rules = DEFAULT_RULES): boolean {
   return p
     .split(/[\\/]+/)
     .slice(0, -1)
-    .some(seg => SENSITIVE_SEGMENTS.has(seg.toLowerCase()))
+    .some(seg => rules.sensitiveDirs.has(seg.toLowerCase()))
 }

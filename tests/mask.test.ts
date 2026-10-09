@@ -1,6 +1,6 @@
 // 全部為合成資料：身分證以檢核碼演算法產生，非真實個人。
 import { describe, expect, test } from 'claude-code/testing'
-import { findMaskTokens, isSensitivePath, isValidTwId, maskBlocks, maskText } from '../hooks/mask'
+import { buildRules, DEFAULT_CONFIG, findMaskTokens, isSensitivePath, isValidTwId, maskBlocks, maskText } from '../hooks/mask'
 
 const NID = 'A123456789' // 教科書範例，合法檢核碼
 const NID2 = 'F234567898'
@@ -130,16 +130,20 @@ describe('content blocks', () => {
 })
 
 describe('資料完整性與路徑', () => {
-  test('偵測遮罩字樣，§4 示範字樣除外', () => {
+  test('偵測遮罩字樣；示範字樣預設不豁免，設定後才豁免', () => {
     expect(findMaskTokens('id A12****89')).toEqual(['A12****89'])
     expect(findMaskTokens('病歷號: ****')).toHaveLength(1)
-    expect(findMaskTokens('範例 A12****90 與 12****89')).toEqual([])
+    const ex = '範例 A12****90 與 12****89'
+    expect(findMaskTokens(ex)).toHaveLength(2)
+    const withExempt = buildRules({ ...DEFAULT_CONFIG, exemptMaskExamples: ['A12****90', '12****89'] })
+    expect(findMaskTokens(ex, withExempt)).toEqual([])
     expect(findMaskTokens('**bold** 與 ****')).toEqual([])
   })
 
   test('敏感目錄判斷看目錄段，不看檔名', () => {
     expect(isSensitivePath('C:\\proj\\data\\00_private\\scan.png')).toBe(true)
-    expect(isSensitivePath('/vault/raw/a.pdf')).toBe(true)
+    expect(isSensitivePath('/vault/raw/a.pdf')).toBe(false) // raw 不在開源預設內
+    expect(isSensitivePath('/vault/raw/a.pdf', buildRules({ ...DEFAULT_CONFIG, sensitiveDirs: ['raw'] }))).toBe(true)
     expect(isSensitivePath('/proj/assets/private.png')).toBe(false)
     expect(isSensitivePath('/proj/assets/logo.png')).toBe(false)
   })

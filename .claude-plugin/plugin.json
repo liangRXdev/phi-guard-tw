@@ -1,6 +1,38 @@
 {
   "name": "phi-guard-tw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "在模型讀到之前遮罩台灣身分證／居留證號與有標籤的病歷號、健保卡號；擋下會把遮罩值寫回來源的工具呼叫",
-  "author": { "name": "liangRxdev" }
+  "author": { "name": "liangRXdev" },
+  "license": "MIT",
+  "repository": "https://github.com/liangRXdev/phi-guard-tw",
+  "userConfig": {
+    "extraMrnLabels": {
+      "type": "string",
+      "multiple": true,
+      "title": "額外的病歷號標籤",
+      "description": "內建標籤（病歷號、病歷號碼、MRN、ChartNo、chart_no）以外，貴院使用的欄名。當純文字比對，少於 2 個字元者忽略。",
+      "default": []
+    },
+    "sensitiveDirs": {
+      "type": "string",
+      "multiple": true,
+      "title": "敏感目錄",
+      "description": "路徑中含這些目錄名稱時，擋下對圖片／PDF 的 Read（影像內容無法遮罩）。不分大小寫。",
+      "default": ["00_private", "private", "phi"]
+    },
+    "exemptMaskExamples": {
+      "type": "string",
+      "multiple": true,
+      "title": "豁免的遮罩示範字樣",
+      "description": "文件中合法出現、寫入時不擋的遮罩字樣（例如規範文件裡的格式範例）。不像遮罩字樣的值會被忽略。",
+      "default": []
+    },
+    "readOnlyMcpTools": {
+      "type": "string",
+      "multiple": true,
+      "title": "唯讀 MCP 工具",
+      "description": "輸入含遮罩字樣也放行的 MCP 工具全名。未列出的 MCP 工具一律當成可能寫入。",
+      "default": ["mcp__claude_ai_Google_Sheets__get_values", "mcp__claude_ai_Google_Sheets__get_spreadsheet"]
+    }
+  }
 }

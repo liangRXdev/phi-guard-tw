@@ -1,0 +1,6 @@
+{
+  "name": "phi-guard-tw",
+  "owner": { "name": "liangRXdev" },
+  "description": "台灣病患識別欄位（身分證、居留證、病歷號、健保卡號）遮罩 mod for Claude Code",
+  "plugins": [{ "name": "phi-guard-tw", "source": "./" }]
+}

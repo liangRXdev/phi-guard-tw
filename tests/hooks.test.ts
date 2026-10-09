@@ -91,7 +91,10 @@ test('tool.call：Bash 指令含遮罩字樣時擋下', async ($, on) => {
   expect(ran).toBe(false)
 })
 
-test('tool.call：§4 示範字樣與一般內容放行', async ($, on) => {
+test(
+  'tool.call：設定的示範字樣與一般內容放行',
+  { options: { exemptMaskExamples: ['A12****90', '12****89'] } },
+  async ($, on) => {
   let ran = 0
   on('tool.call', () => {
     ran++
@@ -100,7 +103,8 @@ test('tool.call：§4 示範字樣與一般內容放行', async ($, on) => {
   await $.tool.call({ tool: 'Write', file_path: '/tmp/a.md', content: '遮罩格式：A12****90、12****89' })
   await $.tool.call({ tool: 'Edit', file_path: '/tmp/a.md', old_string: 'a', new_string: 'b' })
   expect(ran).toBe(2)
-})
+  },
+)
 
 test('tool.call：子代理回報與 SendMessage 含遮罩字樣不擋（實測誤擋的回歸測試）', async ($, on) => {
   const STARS = '*'.repeat(4) // 執行時才組出遮罩字樣，原始碼本身不含，否則編輯本檔會被守門擋下
