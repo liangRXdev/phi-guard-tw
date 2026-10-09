@@ -1,0 +1,6 @@
+{
+  "name": "phi-guard-tw",
+  "version": "0.1.0",
+  "description": "在模型讀到之前遮罩台灣身分證／居留證號與有標籤的病歷號、健保卡號；擋下會把遮罩值寫回來源的工具呼叫",
+  "author": { "name": "liangRxdev" }
+}
