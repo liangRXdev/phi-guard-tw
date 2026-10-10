@@ -33,6 +33,24 @@ function pathOf(input: Record<string, unknown>): string | undefined {
   return undefined
 }
 
+/**
+ * 取出輸入中所有字串（含物件鍵名），逐一掃描。不掃 JSON.stringify 的結果：跳脫後換行變成 \n、
+ * 引號變成 \"，遮罩字樣前面多出英文字母或反斜線，邊界判斷會失準而漏擋。
+ */
+function stringsOf(root: unknown): string[] {
+  const out: string[] = []
+  const stack: unknown[] = [root]
+  while (stack.length > 0) {
+    const v = stack.pop()
+    if (typeof v === 'string') out.push(v)
+    else if (Array.isArray(v)) stack.push(...v)
+    else if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) stack.push(k, x)
+    }
+  }
+  return out
+}
+
 function loadRules(options: unknown): { rules: ReturnType<typeof buildRules>; warnings: string[] } {
   try {
     const { config, warnings } = normalizeConfig(options)
@@ -83,10 +101,11 @@ export const register: Register = (on, options) => {
     const tool = String(e.tool)
 
     const p = tool === 'Read' ? pathOf(input) : undefined
-    if (p !== undefined && isMediaPath(p)) {
-      // 字面路徑與實際落點（解析 symlink、junction、..）都要檢查；解析不到就擋（fail-closed）。
-      const stat = await $.fs.stat(p, { resolve: true }).catch(() => undefined)
-      const real = stat?.realPath
+    // 所有 Read 都先解析實際落點：無副檔名的 symlink 可能指向敏感目錄內的圖片／PDF。
+    const stat = p === undefined ? undefined : await $.fs.stat(p, { resolve: true }).catch(() => undefined)
+    const real = stat?.realPath
+    if (p !== undefined && (isMediaPath(p) || (real !== undefined && isMediaPath(real)))) {
+      // 字面路徑與實際落點（解析 symlink、junction、..）都要檢查；字面是媒體卻解析不到就擋（fail-closed）。
       if (real === undefined || isSensitivePath(p, rules) || isSensitivePath(real, rules)) {
         const why = real === undefined ? '無法解析實際路徑' : '位於敏感目錄'
         return { deny: `phi-guard-tw：${p} 是圖片／PDF 且${why}，影像內容無法遮罩，已擋下。需要時請先去識別化或轉成文字再讀。` }
@@ -96,7 +115,7 @@ export const register: Register = (on, options) => {
 
     if (!READ_ONLY_TOOLS.has(tool) && !rules.readOnlyMcpTools.has(tool)) {
       const { tool: _t, tool_use_id: _id, agentId: _a, consent: _c, ...args } = input
-      const hits = findMaskTokens(JSON.stringify(args), rules)
+      const hits = stringsOf(args).flatMap(s => findMaskTokens(s, rules))
       if (hits.length > 0) {
         return {
           deny: `phi-guard-tw：${tool} 的輸入含遮罩字樣（${hits.length} 處），執行會把遮罩值寫回來源資料而損毀原檔，已擋下。請改用不經遮罩的方式處理該欄位（例如由使用者手動編輯）。`,

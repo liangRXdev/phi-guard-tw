@@ -137,7 +137,8 @@ describe('資料完整性與路徑', () => {
     expect(findMaskTokens(ex)).toHaveLength(2)
     const withExempt = buildRules({ ...DEFAULT_CONFIG, exemptMaskExamples: ['A12****90', '12****89'] })
     expect(findMaskTokens(ex, withExempt)).toEqual([])
-    expect(findMaskTokens('**bold** 與 ****')).toEqual([])
+    expect(findMaskTokens('**bold**')).toEqual([])
+    expect(findMaskTokens('與 ' + '*'.repeat(4))).toHaveLength(1) // 短值全遮（P0-1）
   })
 
   test('敏感目錄判斷看目錄段，不看檔名', () => {

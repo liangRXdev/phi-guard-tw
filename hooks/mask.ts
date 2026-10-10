@@ -106,8 +106,15 @@ export const DEFAULT_CONFIG: GuardConfig = {
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** 遮罩字樣的外形：英數 2–3 碼 + 四個星號 + 英數 2 碼，或有標籤後接四個星號（短值全遮）。 */
+/** 遮罩字樣的外形：英數 2–3 碼 + 四個星號 + 英數 2 碼（豁免值只認這種）。 */
 const MASK_SHAPE = String.raw`[A-Za-z0-9]{2,3}\*{4}[A-Za-z0-9]{2}`
+
+/**
+ * 短值全遮的結果：前後不接星號或英數的四個星號。不要求標籤：表格欄、JSON 二維陣列遮出的短值旁邊沒有標籤，
+ * 標籤加引號的寫法（"MRN": "…"）也不在 SEP 涵蓋內。
+ * 代價是原始碼或文件裡獨立的四個星號也會擋（偏向多擋）。
+ */
+const BARE_MASK = String.raw`(?<![*A-Za-z0-9])\*{4}(?![*A-Za-z0-9])`
 
 function stringList(v: unknown): string[] | undefined {
   if (v === undefined) return undefined
@@ -159,10 +166,7 @@ export function buildRules(cfg: GuardConfig): Rules {
       ['mrn', new RegExp(String.raw`^["' ]*(?:${mrn})["' ]*$`, 'i')],
       ['nhi', new RegExp(String.raw`^["' ]*(?:${NHI_LABELS})["' ]*$`, 'i')],
     ],
-    maskToken: new RegExp(
-      String.raw`(?<![A-Za-z0-9])${MASK_SHAPE}(?![A-Za-z0-9])|(?:${mrn}|${NHI_LABELS})(?:${SEP})\*{4}(?!\*)`,
-      'gi',
-    ),
+    maskToken: new RegExp(String.raw`(?<![A-Za-z0-9])${MASK_SHAPE}(?![A-Za-z0-9])|${BARE_MASK}`, 'g'),
     exempt: new Set(cfg.exemptMaskExamples),
     sensitiveDirs: new Set(cfg.sensitiveDirs.map(s => s.toLowerCase())),
     readOnlyMcpTools: new Set(cfg.readOnlyMcpTools),
