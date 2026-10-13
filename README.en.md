@@ -40,6 +40,7 @@ A Claude Code mod (a function-hooks plugin) that masks Taiwanese patient identif
 | `sensitiveDirs` | `00_private`, `private`, `phi` | Read on images and PDFs is blocked when the path contains one of these directory names (case-insensitive). |
 | `exemptMaskExamples` | empty | Mask tokens that may still be written, such as format examples in documentation. |
 | `readOnlyMcpTools` | Google Sheets `get_values`, `get_spreadsheet` | MCP tools allowed even when their input contains mask tokens. This list replaces the default. Any MCP tool not listed is treated as write-capable. |
+| `drugCodeRepos` | empty | Sessions whose project root is under one of these **absolute paths** skip old-format ARC detection (second character A–D). Taiwan NHI drug codes share that format (2 letters + 8 digits); about 3.3% pass the checksum and get masked by mistake. National IDs, new-format ARCs, MRNs and NHI card numbers are still masked. Matched by path segment; if the root cannot be read, full rules apply. |
 
 ## Limitations
 
