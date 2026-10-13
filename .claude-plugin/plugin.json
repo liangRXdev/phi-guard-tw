@@ -27,6 +27,13 @@
       "description": "文件中合法出現、寫入時不擋的遮罩字樣（例如規範文件裡的格式範例）。不像遮罩字樣的值會被忽略。",
       "default": []
     },
+    "drugCodeRepos": {
+      "type": "string",
+      "multiple": true,
+      "title": "藥品代號 repo",
+      "description": "session 的專案根目錄位於這些絕對路徑（含子目錄）時，不偵測舊式居留證（第二碼 A–D）——其格式與健保藥品代號相同而會誤遮。身分證、新式居留證、病歷號、健保卡號照常遮罩。",
+      "default": []
+    },
     "readOnlyMcpTools": {
       "type": "string",
       "multiple": true,

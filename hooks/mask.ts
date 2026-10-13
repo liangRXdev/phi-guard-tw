@@ -95,6 +95,7 @@ export type GuardConfig = {
   sensitiveDirs: readonly string[]
   exemptMaskExamples: readonly string[]
   readOnlyMcpTools: readonly string[]
+  drugCodeRepos: readonly string[]
 }
 
 export const DEFAULT_CONFIG: GuardConfig = {
@@ -102,6 +103,7 @@ export const DEFAULT_CONFIG: GuardConfig = {
   sensitiveDirs: ['00_private', 'private', 'phi'],
   exemptMaskExamples: [],
   readOnlyMcpTools: ['mcp__claude_ai_Google_Sheets__get_values', 'mcp__claude_ai_Google_Sheets__get_spreadsheet'],
+  drugCodeRepos: [],
 }
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -142,11 +144,21 @@ export function normalizeConfig(options: unknown): { config: GuardConfig; warnin
   const shape = new RegExp(String.raw`^${MASK_SHAPE}$`)
   const exempt = pick('exemptMaskExamples').map(s => s.trim()).filter(s => shape.test(s))
   const mcp = pick('readOnlyMcpTools').map(s => s.trim()).filter(s => s.startsWith('mcp__'))
+  const repos = pick('drugCodeRepos').map(s => s.trim()).filter(s => s.length > 0)
+  // 只接受絕對路徑：相對路徑沒有基準，比對結果會隨 session 目錄漂移
+  const absRepos = repos.filter(isAbsolutePath)
+  if (absRepos.length < repos.length) warnings.push('drugCodeRepos 只接受絕對路徑，相對路徑已忽略')
   if (dirs.length === 0) warnings.push('sensitiveDirs 為空：敏感目錄的圖片／PDF 守門已關閉')
-  return { config: { extraMrnLabels: labels, sensitiveDirs: dirs, exemptMaskExamples: exempt, readOnlyMcpTools: mcp }, warnings }
+  return {
+    config: { extraMrnLabels: labels, sensitiveDirs: dirs, exemptMaskExamples: exempt, readOnlyMcpTools: mcp, drugCodeRepos: absRepos },
+    warnings,
+  }
 }
 
 export type Rules = {
+  /** 是否偵測舊式居留證（第二碼 A–D）。drugCodeRepos 底下的 session 為 false，其餘一律 true。 */
+  oldArc: boolean
+  drugCodeRepos: readonly string[]
   labeled: Array<[Kind, RegExp]>
   header: Array<[Kind, RegExp]>
   maskToken: RegExp
@@ -158,6 +170,8 @@ export type Rules = {
 export function buildRules(cfg: GuardConfig): Rules {
   const mrn = [BUILTIN_MRN_LABELS, ...cfg.extraMrnLabels.map(escapeRe)].join('|')
   return {
+    oldArc: true,
+    drugCodeRepos: cfg.drugCodeRepos.map(normalizePath),
     labeled: [
       ['mrn', new RegExp(String.raw`(?:${mrn})(?:${SEP})${VALUE}`, 'gi')],
       ['nhi', new RegExp(String.raw`(?:${NHI_LABELS})(?:${SEP})${VALUE}`, 'gi')],
@@ -174,6 +188,32 @@ export function buildRules(cfg: GuardConfig): Rules {
 }
 
 export const DEFAULT_RULES: Rules = buildRules(DEFAULT_CONFIG)
+
+// ---------- 藥品代號 repo（drugCodeRepos） ----------
+//
+// 健保藥品代號是「2 個英文字母＋8 位數字」，與舊式居留證（第二碼 A–D）格式相同；
+// 實測 45,217 個健保代號中 1,477 個（3.3%）通過檢核碼而被誤遮，與身分證／新式居留證碰撞 0 個
+// （2026-10-13，NHI-drug-price-history）。所以只豁免舊式居留證這一種，其餘偵測照常。
+
+const isAbsolutePath = (p: string): boolean => /^(?:[A-Za-z]:[\\/]|[\\/])/.test(p)
+
+/** 比對用：反斜線轉斜線、去尾端斜線、Windows 磁碟路徑不分大小寫。 */
+export function normalizePath(p: string): string {
+  const s = p.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[A-Za-z]:/.test(s) ? s.toLowerCase() : s
+}
+
+/** path 是否等於或位於任一 repo 之下（以路徑段為界：`/a/NHI` 不涵蓋 `/a/NHI-x`）。 */
+export function isUnderAny(path: string, repos: readonly string[]): boolean {
+  const p = normalizePath(path)
+  return repos.some(r => p === r || p.startsWith(`${r}/`))
+}
+
+/** session 目錄落在 drugCodeRepos 底下時改用的規則：只關掉舊式居留證偵測。 */
+export function rulesForRoot(rules: Rules, root: string | undefined): Rules {
+  if (root === undefined || rules.drugCodeRepos.length === 0) return rules
+  return isUnderAny(root, rules.drugCodeRepos) ? { ...rules, oldArc: false } : rules
+}
 
 type Span = { start: number; end: number; replacement: string; kind: Kind }
 
@@ -317,6 +357,7 @@ export function maskText(input: string, rules: Rules = DEFAULT_RULES): { text: s
   for (const m of norm.matchAll(TWID_RE)) {
     const id = m[0].toUpperCase()
     if (!isValidTwId(id)) continue
+    if (!rules.oldArc && /[A-D]/.test(id.charAt(1))) continue   // drugCodeRepos：舊式居留證＝藥品代號格式
     const start = m.index ?? 0
     spans.push({ start, end: start + 10, replacement: maskTwId(id), kind: 'twid' })
   }

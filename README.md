@@ -49,6 +49,7 @@ Claude Code 的 mod（function hooks plugin）。在模型讀到之前，強制�
 | `sensitiveDirs` | `00_private`、`private`、`phi` | 路徑裡出現這些目錄名稱時，擋下對圖片／PDF 的 Read。不分大小寫。設成空陣列等於關閉這道守門，session 開始時會跳 toast 提醒 |
 | `exemptMaskExamples` | 空 | 寫入時不擋的遮罩字樣，例如規範文件裡的格式範例。值不像遮罩字樣（英數 2–3 碼＋`****`＋英數 2 碼）就會被忽略 |
 | `readOnlyMcpTools` | Google Sheets 的 `get_values`、`get_spreadsheet` | 輸入含遮罩字樣也放行的 MCP 工具全名（必須以 `mcp__` 開頭）。設定會**取代**預設值。沒列出的 MCP 工具一律當成可能寫入 |
+| `drugCodeRepos` | 空 | 專案根目錄位於這些**絕對路徑**（含子目錄）的 session，不偵測舊式居留證（第二碼 A–D）。健保藥品代號是「2 個英文字母＋8 位數字」，與舊式居留證同格式，實測約 3.3% 的代號通過檢核碼而被誤遮；身分證、新式居留證、病歷號、健保卡號照常遮罩。以路徑段比對，`…/NHI` 不涵蓋 `…/NHI-x`；取不到根目錄時用完整規則 |
 
 內建的病歷號標籤、健保卡號標籤和身分證規則**不可關閉**。
 

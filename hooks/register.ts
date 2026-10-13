@@ -1,4 +1,4 @@
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 import {
   addCounts,
   buildRules,
@@ -12,8 +12,10 @@ import {
   maskText,
   normalizeConfig,
   placeholderBlocks,
+  rulesForRoot,
   totalOf,
 } from './mask'
+import type { Rules } from './mask'
 
 // 不寫回資料的內建工具：讀取類，以及代理之間傳訊息的工具（子代理的回報、SendMessage）。
 // 輸入裡出現遮罩字樣也不會寫壞任何來源檔，不擋。MCP 工具另由 userConfig 的 readOnlyMcpTools 指定，
@@ -61,6 +63,16 @@ function loadRules(options: unknown): { rules: ReturnType<typeof buildRules>; wa
   }
 }
 
+/**
+ * 依 session 的專案根目錄選規則（drugCodeRepos）。取不到根目錄就用完整規則——
+ * 寧可多遮，不因查詢失敗而少遮。
+ */
+async function rulesNow($: EngineInterface, rules: Rules): Promise<Rules> {
+  if (rules.drugCodeRepos.length === 0) return rules
+  const root = await $.session.root().catch(() => undefined)
+  return rulesForRoot(rules, root)
+}
+
 export const register: Register = (on, options) => {
   const { rules, warnings } = loadRules(options)
   let sessionMasked = 0
@@ -73,7 +85,7 @@ export const register: Register = (on, options) => {
 
   // ① 每一筆寫進對話的列（工具結果、MCP、附件、提問、子代理的對話）：模型讀到之前遮罩。
   on('session.append', async ($, e, next) => {
-    const r = maskBlocks(e.message.content, rules)
+    const r = maskBlocks(e.message.content, await rulesNow($, rules))
     if (!r.changed) return next(e)
     const stored = await next({ ...e, message: { ...e.message, content: r.blocks } })
     sessionMasked += totalOf(r.counts)
@@ -86,9 +98,10 @@ export const register: Register = (on, options) => {
   )
 
   // ② 提問：送出前遮罩，toast 只報類型與數量，不顯示原值。
-  on('prompt.submit', ($, e, next) => {
-    const t = maskText(e.text, rules)
-    const ctx = e.context?.map(c => maskText(c, rules))
+  on('prompt.submit', async ($, e, next) => {
+    const active = await rulesNow($, rules)
+    const t = maskText(e.text, active)
+    const ctx = e.context?.map(c => maskText(c, active))
     const merged = [t.counts, ...(ctx ?? []).map(c => c.counts)].reduce(addCounts, emptyCounts())
     if (totalOf(merged) === 0) return next(e)
     $.ui.toast(`phi-guard：提問已遮罩 ${describeCounts(merged)}`)
